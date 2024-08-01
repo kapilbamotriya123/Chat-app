@@ -117,7 +117,49 @@ const server = app.listen(3001, ()=> {
 
 const wss = new ws.WebSocketServer({server})
 
-wss.on('connection', (connection) => {
-    console.log("connection")
-    connection.send('hello mutherfucker')
-} )
+wss.on('connection', async (connection, req) => {
+  // we are reading username and id from the cookie for this connection
+  const cookies = req.headers.cookie;
+  if (cookies) {
+      const tokenCookieString = cookies.split(';').find(str => str.startsWith('token='));
+      //extracting the user information from cookie and storing it to connection
+      if (tokenCookieString) {
+          const token = tokenCookieString.split('=')[1];
+          if (token) {
+              try {
+                  const { username, userId } = await jwt.verify(token, jwtSecret);
+                  connection.userId = userId;
+                  connection.username = username;
+              } catch (error) {
+                  throw error;
+              }
+          }
+      }
+  }
+
+  // when someone sends a message
+  connection.on('message', (message) => {
+      try {
+          const messageData = JSON.parse(message.toString());
+          const {recipient, text} = messageData
+          if(recipient && text) {
+            [...wss.clients]
+            .filter(client => client.username === recipient)
+            .forEach(client => client.send(JSON.stringify({text})));
+            /* this is important as we are not finding , we are filtering which at first glance might look off as there
+            is only one user of username but clients are user so a single user can be
+            connected on multiple devices so there may be multiple clients and we want to send data to everyone of them */
+          }
+
+      } catch (error) {
+          console.error('Error parsing message:', error);
+      }
+  });
+
+  // notify the people about who is online
+  [...wss.clients].forEach(client => {
+      client.send(JSON.stringify({
+          online: [...wss.clients].map(c => ({ userId: c.userId, username: c.username }))
+      }));
+  });
+});
